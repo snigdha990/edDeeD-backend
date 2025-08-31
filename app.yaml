@@ -1,0 +1,7 @@
+runtime: nodejs20
+
+env_variables:
+  MONGO_URI: "mongodb+srv://saisnigdha1811:snigdha1829@cluster1.btlzjy8.mongodb.net/edDeedDBretryWrites=true&w=majority&appName=Cluster1"
+handlers:
+  - url: /.*
+    script: auto
