@@ -2,28 +2,53 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
+const mongoose = require('mongoose');
+
 const School = require('./models/schools');
 const Tuition = require('./models/apTuition');
 const SuggestedSchool = require('./models/SuggestedSchool');
+const SuggestedTuition = require('./models/SuggestedTuition'); 
 const User = require('./models/User');
+
 const seedSchools = require('./schoolsData');
 const seedTuitions = require('./TuitionData');
 const connectDB = require('./db');
+
 const app = express();
 const PORT = process.env.PORT || 8080;
-console.log('Listening on port:', PORT);
+
+// Debug request headers
+app.use((req, res, next) => {
+  console.log('Headers:', req.headers);
+  next();
+});
+
+// CORS setup
+const allowedOrigins = [
+  'https://ed-dee-d-frontend.vercel.app',
+  'http://localhost:5173'
+];
+
 const corsOptions = {
-  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
-  methods: ['GET', 'POST','PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
 };
 
 app.use(cors(corsOptions));
 app.use(express.json());
 
-const MONGO_URI = process.env.NODE_ENV === 'development'
-  ? process.env.MONGO_LOCAL_URI
-  : process.env.MONGO_URI;
+// Mongo URI
+const MONGO_URI =
+  process.env.NODE_ENV === 'development'
+    ? process.env.MONGO_LOCAL_URI
+    : process.env.MONGO_URI;
+
 
 app.get('/', (req, res) => {
   res.send('Welcome to the EdDeeD backend API!');
@@ -33,14 +58,16 @@ app.get('/schoolsapi', async (req, res) => {
   try {
     const search = req.query.search;
     let query = {};
+
     if (search) {
       query = {
         $or: [
           { name: { $regex: search, $options: 'i' } },
-          { tags: { $regex: search, $options: 'i' } }
-        ]
+          { tags: { $regex: search, $options: 'i' } },
+        ],
       };
     }
+
     const schools = await School.find(query);
     res.json(schools);
   } catch (error) {
@@ -49,6 +76,7 @@ app.get('/schoolsapi', async (req, res) => {
   }
 });
 
+// GET single school by ID
 app.get('/schoolsapi/:id', async (req, res) => {
   try {
     const school = await School.findById(req.params.id);
@@ -59,10 +87,13 @@ app.get('/schoolsapi/:id', async (req, res) => {
   }
 });
 
+// POST new school
 app.post('/schoolsapi', async (req, res) => {
   try {
     const { name, address, image, tags } = req.body;
-    if (!name || !address) return res.status(400).json({ message: 'Name and address are required.' });
+
+    if (!name || !address)
+      return res.status(400).json({ message: 'Name and address are required.' });
 
     const school = new School({
       name,
@@ -78,6 +109,7 @@ app.post('/schoolsapi', async (req, res) => {
   }
 });
 
+// DELETE school
 app.delete('/schoolsapi/:id', async (req, res) => {
   try {
     const deletedSchool = await School.findByIdAndDelete(req.params.id);
@@ -85,6 +117,20 @@ app.delete('/schoolsapi/:id', async (req, res) => {
     res.json({ message: 'School deleted', deletedSchool });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+app.get('/tuitionsapi', async (req, res) => {
+  try {
+    const search = req.query.search || '';
+    const query = search
+      ? { tuitionName: { $regex: search, $options: 'i' } }
+      : {};
+    const tuitions = await Tuition.find(query);
+    res.json(tuitions);
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching tuitions' });
   }
 });
 
@@ -96,6 +142,7 @@ app.get('/api/tuitions', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 app.post('/api/tuitions', async (req, res) => {
   try {
@@ -150,25 +197,46 @@ app.delete('/schoolsuggestionsapi/:id', async (req, res) => {
   }
 });
 
-app.post('/api/register', async (req, res) => {
+app.post('/tuitionsuggestionsapi', async (req, res) => {
   try {
-    const { firstName, lastName, email, password, role } = req.body;
-
-    if (!firstName || !lastName || !email || !password || !role) {
-      return res.status(400).json({ message: 'All fields are required.' });
-    }
-
-    const existing = await User.findOne({ email });
-    if (existing) return res.status(409).json({ message: 'Email already registered.' });
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ firstName, lastName, email, password: hashedPassword, role });
-    await user.save();
-
-    res.status(201).json({ message: 'User registered.' });
+    const suggestion = new SuggestedTuition(req.body);
+    await suggestion.save();
+    res.status(201).json({ message: 'Tuition suggestion submitted' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error.' });
+    res.status(500).json({ message: 'Failed to save suggestion', error: err.message });
+  }
+});
+
+app.get('/tuitionsuggestionsapi', async (req, res) => {
+  try {
+    const suggestions = await SuggestedTuition.find().sort({ suggestedAt: -1 });
+    res.json(suggestions);
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching tuition suggestions' });
+  }
+});
+
+app.put('/tuitionsuggestionsapi/approve/:id', async (req, res) => {
+  try {
+    const updated = await SuggestedTuition.findByIdAndUpdate(
+      req.params.id,
+      { status: 'approved' },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Suggestion not found' });
+    res.json({ message: 'Tuition suggestion approved', suggestion: updated });
+  } catch (err) {
+    res.status(500).json({ message: 'Approval failed' });
+  }
+});
+
+app.delete('/tuitionsuggestionsapi/:id', async (req, res) => {
+  try {
+    const deleted = await SuggestedTuition.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ message: 'Suggestion not found' });
+    res.json({ message: 'Suggestion deleted' });
+  } catch (err) {
+    res.status(500).json({ message: 'Deletion failed' });
   }
 });
 
